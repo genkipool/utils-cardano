@@ -31,9 +31,11 @@ python3 simWinAda.py
 
   [*] En 5 años has conseguido un total de 12,219.51103880 A --> 1,221.95110388 € 
   
+```
+
 ## crearStakePool.sh
 Script con las opciones necesarias para instalar, crear, configurar, registrar y mantener un stake pool de cardano.
-```
+
 ```
 ./crearStakePool.sh
 
