@@ -60,6 +60,8 @@ Script con las opciones necesarias para instalar, crear, configurar, registrar y
    33: Configurar Grafana
    34: Configurar Node Exporter
    35: Ayuda
+   
+   [*] Elige una o más opciones [0-35]: 0 1 2 3 4 5
 
 ```
 
