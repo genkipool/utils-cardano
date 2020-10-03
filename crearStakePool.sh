@@ -169,6 +169,7 @@ instalarProgramas(){
 							read -p " [?] Escriba que version quiere instalar [ejemplo: 1.16.x]: " version
 							git checkout tags/$version
 							if [ $? -eq 0 ]; then 
+								cabal update
 								cabal install cardano-node cardano-cli --overwrite-policy=always
 								cabal build all
 								ghc_version=$( ghc -V | awk '{printf $NF}')
@@ -859,6 +860,7 @@ calcularKesPeriod(){
 			fi 
 			slotNoKesPeriod=$( cat ${dirBlock}/$dirShelleyGenesis | jq -r '.slotsPerKESPeriod' )
 			datosPool["kesPeriod"]=$((${slotNo} / ${slotNoKesPeriod}))
+			datosPool["startkesPeriod"]=$(( ${datosPool["kesPeriod"]} -1 ))
 			declare -p datosPool > ${dirNodos}/$filedatosPool
 		else
 			which iniciarNodos | xargs bash -c 
@@ -1010,6 +1012,7 @@ generarOperationalCert(){
 	echo -e "$IGreen [*] slotNo: $slotNo $End" 
 	echo -e "$IGreen [*] slotNoKesPeriod: $slotNoKesPeriod $End" 
 	echo -e "$IGreen [*] kesPeriod: ${datosPool["kesPeriod"]} $End" 
+	echo -e "$IGreen [*] kesPeriod: ${datosPool["startkesPeriod"]} $End" 
 
 	cd ${dirBlock}/$dirKeysPool
 
@@ -1017,7 +1020,7 @@ generarOperationalCert(){
 	--kes-verification-key-file $keyKES_Vkey \
 	--cold-signing-key-file $keyPoolCold_Skey \
 	--operational-certificate-issue-counter  $cert_PoolCold_Counter \
-	--kes-period ${datosPool["kesPeriod"]} \
+	--kes-period ${datosPool["startkesPeriod"]} \
 	--out-file $cert_issue_op
 
 	if [ $? -eq 0 ]; then 
@@ -2457,11 +2460,9 @@ ConfigurarNodeExporter(){
 
 ConfigurarGrafana(){
 
-	sudo grafana-cli plugins install grafana-clock-panel
-
-
+	
 	while true; do
-		read -s -p " [?] Ingrese una contraseña para cifrar/descifrar las keys [minimo 10 cracteres, recomendado 16 caracteres]: " pass
+		read -s -p " [?] Ingrese contraseña de acceso admin " pass
 		echo -e ""
 		read -s -p " [?] Ingrese de nuevo la contrasña: " pass2
 		if [ $pass == $pass2 ]; then
@@ -2483,8 +2484,7 @@ ConfigurarGrafana(){
 		else echo -e "$IYellow \n [!!] Dirección IPv4 incorrecta $End"; continue; fi 
 	done
 
-	sudo grafana-cli admin reset-admin-password $pass
-	rm ~/.history
+
 	sudo sed -i.bak -e "s|;http_addr =|http_addr = $ipGrafana|"  /usr/share/grafana/conf/defaults.ini
 	sudo sed -i.bak -e "s|;http_addr =|http_addr = $ipGrafana|"  /etc/grafana/grafana.ini
 
@@ -3319,6 +3319,10 @@ ConfigurarGrafana(){
   "version": 1
 }"'
 
+	sudo grafana-cli admin reset-admin-password $pass
+	rm ~/.history
+
+	sudo grafana-cli plugins install grafana-clock-panel
 
 }
 
