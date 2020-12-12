@@ -5,7 +5,7 @@
 # File:    crearStakePool.sh
 # Created: 27/06/2020
 #=====================================================================
-# Version Script: 0
+# Version Script: 2
 # Software: Ubuntu 20.04
 #
 # ACTUALIZACIONES:
@@ -15,6 +15,9 @@
 #  * 29/07/2020: cardano-node 1.18.0. Haskell Mainnet
 #  * 13/08/2020: Se corrige error al copiar los binarios de cardano-node y cardano-cli
 #  * 06/09/2020: Añade apartado extended metadata json
+#  * 12/10/2020: Se añade apartado para actualizar IPs relay Pool
+#  * 28/11/2020: actualizar cardano-node y cardano-cli 1.23.0 y ghcup 8.10.2
+#  * 5/12/2020: se añade pool id hex, consultar saldo de direcciń concreta, enviar ADAS, reclamar recompensas, elegir pool mainnet o testnet
 #
 # DESCRIPCION:
 #  * Este script crea un stake pool en Shelley Mainnet Haskell.
@@ -83,29 +86,38 @@ instalarProgramas(){
 				    # TMP: Dirty hack to prevent ghcup interactive setup, yet allow profile set up
 				    unset BOOTSTRAP_HASKELL_NONINTERACTIVE
 				    export BOOTSTRAP_HASKELL_NO_UPGRADE=1
-				    curl -s --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sed -e 's#read.*#answer=Y;next_answer=Y#' | bash
+				    CURL_TIMEOUT=60
+
+  					curl -s -m ${CURL_TIMEOUT} --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sed -e 's#read.*#answer=Y;next_answer=Y;hls_answer=N#' | bash
+
 				    # shellcheck source=/dev/null
 				    . ~/.ghcup/env
-				    ghcup install 8.6.5
-				    ghcup set 8.6.5
+				    ghcup install 8.10.2
+				    ghcup set  8.10.2
 				    ghc --version
 				    echo -e "$IGreen \n [+] $programa instalado \n$End"
 			  	;;
 			  	Libsodium)
 					echo -e "$IGreen \n [*] Instalar $programa $End"
 					cd
-					git clone https://github.com/input-output-hk/libsodium
+					if ! grep -q "/usr/local/lib:\$LD_LIBRARY_PATH" "${HOME}"/.bashrc; then
+					    echo "export LD_LIBRARY_PATH=/usr/local/lib:\$LD_LIBRARY_PATH" >> "${HOME}"/.bashrc
+					    export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+					fi
+					if ! grep -q "/usr/local/lib:\$PKG_CONFIG_PATH" "${HOME}"/.bashrc; then
+					    echo "export PKG_CONFIG_PATH=/usr/local/lib:\$PKG_CONFIG_PATH" >> "${HOME}"/.bashrc
+					    export PKG_CONFIG_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+					fi
+
+					git clone https://github.com/input-output-hk/libsodium &>/dev/null
 					cd libsodium
-					git checkout 66f017f1
-					./autogen.sh
-					./configure
-					make
-					sudo make install
-					export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
-					echo export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH" >> ~/.bashrc
-					. "${HOME}/.bashrc"
-					sleep 1
-					echo -e "$IGreen \n [+] $programa instalado \n$End"
+					git checkout 66f017f1 &>/dev/null
+					./autogen.sh > autogen.log > /tmp/libsodium.log 2>&1
+					./configure > configure.log >> /tmp/libsodium.log 2>&1
+					make > make.log 2>&1
+					sudo make install > install.log 2>&1
+					echo "IOG fork of libsodium installed to /usr/local/lib/"
+
 				;;
 				Cabal) 
 					echo -e "$IGreen \n [*] Instalar $programa $End"
@@ -113,8 +125,10 @@ instalarProgramas(){
 					#wget https://downloads.haskell.org/~cabal/cabal-install-3.2.0.0/cabal-install-3.2.0.0-x86_64-unknown-linux.tar.xz
 					#tar -xf cabal-install-3.2.0.0-x86_64-unknown-linux.tar.xz
 					#rm cabal-install-3.2.0.0-x86_64-unknown-linux.tar.xz cabal.sig
-					export GHCUP_INSTALL_BASE_PREFIX=$HOME/.ghcup/env
-					echo export GHCUP_INSTALL_BASE_PREFIX="$HOME/.ghcup/env" >> ~/.bashrc
+					if ! grep -q "$HOME/.ghcup/env" "${HOME}"/.bashrc; then
+						echo export GHCUP_INSTALL_BASE_PREFIX="$HOME/.ghcup/env" >> ~/.bashrc
+						export GHCUP_INSTALL_BASE_PREFIX=$HOME/.ghcup/env
+					fi
 					. "${HOME}/.bashrc"
 					sleep 1
 					ghcup install-cabal
@@ -170,6 +184,7 @@ instalarProgramas(){
 							git checkout tags/$version
 							if [ $? -eq 0 ]; then 
 								cabal update
+								cabal clean
 								cabal install cardano-node cardano-cli --overwrite-policy=always
 								cabal build all
 								ghc_version=$( ghc -V | awk '{printf $NF}')
@@ -230,7 +245,7 @@ instalarProgramas(){
 
 checkDatosNodo(){
 
-	if [ ! -f "${dirNodos}/$filedatosPool" ]; then
+	if [ ! -f "${dirNodos}/$filedatosPool" -o $registros == "actualizarDatos" ]; then
 		while true; do
 			while true; do
 				read -p " [?] Has instalado ya algún nodo relay en otra/s máquina/s [y/n]: " respuesta
@@ -265,6 +280,8 @@ checkDatosNodo(){
 			
 			numrealy=${datosPool["Relays_total_Maquinas"]}
 
+			regexHostname='^[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)' 
+
 			while true; do
 				for (( c=1; c<=$numrealy; c++ )); do
 					while true; do
@@ -283,6 +300,14 @@ checkDatosNodo(){
 		                if [ ${datosPool["Port_realy_$c"]} -gt 1023 -a ${datosPool["Port_realy_$c"]} -lt 49152 ]; then break;
 		                else echo -e "$IYellow \n [!!] Dato incorrecto, introduce un puerto comprendido entre los números 1024 y 49151 $End"; continue; fi
 		            done
+		             read -p " [?] Quieres añadir un hostname a cada uno de los relays [y/n]: " datosPool["añadir_hostname"]
+		            if [[ ${datosPool["añadir_hostname"]} =~ ^[Yy]$ ]]; then
+			            while true; do
+			                read -p " [+] Ingrese hostname relay_$c [ejemplo: relay1.stakepool.com]: " datosPool["Hostname_realy_$c"]
+			                if [[ ${datosPool["Hostname_realy_$c"]} =~ $regexHostname ]]; then break;
+			                else echo -e "$IYellow \n [!!] Dato incorrecto, introduce un dominio valido $End"; continue; fi
+			            done
+			        fi
 		        done
 		        break
 		    done
@@ -304,9 +329,9 @@ checkDatosNodo(){
 				else echo -e "$IYellow \n [!!] Dato incorrecto, introduce un puerto comprendido entre los números 1024 y 49151 $End"; continue; fi
 			done
 			while true; do
-				read -p " [+] Quieres que el nodo Block Producer se comunique con los nodos Relays por IPv4 privada o IPv4 pública [priv/pub]: " datosPool["comunicacion_IPv4"]
-				if [[ ${datosPool["comunicacion_IPv4"]} == "priv" ]]; then break;
-				elif [[ ${datosPool["comunicacion_IPv4"]} == "pub" ]]; then break;
+				read -p " [+] Quieres que el nodo Block Producer se comunique con los nodos Relays por IPv4 privada o IPv4 pública [priv/pub]: " datosPool["comunicacion_Nodos"]
+				if [[ ${datosPool["comunicacion_Nodos"]} == "priv" ]]; then break;
+				elif [[ ${datosPool["comunicacion_Nodos"]} == "pub" ]]; then break;
 				else echo -e "$IYellow \n [!!] Dato incorrecto, introduce priv o pub $End"; continue; fi
 			done
 			echo -e "$IGreen \n [*] Ha introducido los siguientes datos: $End" 
@@ -333,30 +358,30 @@ DecargarAchivosJson(){
 	if [ ! -d "${dirNodos}" ]; then 
 		mkdir -p $dirNodos;
 		cd $dirNodos 
-		echo -e "$IGreen \n [*] Descargando archivos mainnet .json $End" 
-		wget $webIOHKfilesJson/$dirShelleyConfig
-		wget $webIOHKfilesJson/$dirShelleyGenesis
-		wget $webIOHKfilesJson/$dirShelleyGenesisByron
-		wget $webIOHKfilesJson/$dirShelleytopology
-		wget $webIOHKfilesJson/$dirShelleyresConfig
-		wget $webIOHKfilesJson/$dirShelleydbSyn
+		echo -e "$IGreen \n [*] Descargando archivos  .json $End" 
+		wget -N $webIOHKfilesJson/$fileShelleyConfig
+		wget -N $webIOHKfilesJson/$fileShelleyGenesis
+		wget -N $webIOHKfilesJson/$fileShelleyGenesisByron
+		wget -N $webIOHKfilesJson/$fileShelleytopology
+		wget -N $webIOHKfilesJson/$fileShelleyresConfig
+		wget -N $webIOHKfilesJson/$fileShelleydbSyn
 		#mv *-shelley-genesis.json shelley_testnet-genesis.json
 
 		echo -e "$IGreen \n [*] Configurando LiveView y TraceBlockFetchDecisions true \n $End" 
-		sed -i.bak -e "s/SimpleView/LiveView/g" -e "s/TraceBlockFetchDecisions\": false/TraceBlockFetchDecisions\": true/g" $dirShelleyConfig
+		sed -i.bak -e "s/SimpleView/LiveView/g" -e "s/TraceBlockFetchDecisions\": false/TraceBlockFetchDecisions\": true/g" $fileShelleyConfig
 	else
 		cd $dirNodos 
-		echo -e "$IGreen \n [*] Descargando archivos mainnet .json $End" 
-		wget $webIOHKfilesJson/$dirShelleyConfig
-		wget $webIOHKfilesJson/$dirShelleyGenesis
-		wget $webIOHKfilesJson/$dirShelleyGenesisByron
-		wget $webIOHKfilesJson/$dirShelleytopology
-		wget $webIOHKfilesJson/$dirShelleyresConfig
-		wget $webIOHKfilesJson/$dirShelleydbSyn
+		echo -e "$IGreen \n [*] Descargando archivos  .json $End" 
+		wget -N $webIOHKfilesJson/$fileShelleyConfig
+		wget -N $webIOHKfilesJson/$fileShelleyGenesis
+		wget -N $webIOHKfilesJson/$fileShelleyGenesisByron
+		wget -N $webIOHKfilesJson/$fileShelleytopology
+		wget -N $webIOHKfilesJson/$fileShelleyresConfig
+		wget -N $webIOHKfilesJson/$fileShelleydbSyn
 		#mv *-shelley-genesis.json shelley_testnet-genesis.json
 
 		echo -e "$IGreen \n [*] Configurando LiveView y TraceBlockFetchDecisions true \n $End" 
-		sed -i.bak -e "s/SimpleView/LiveView/g" -e "s/TraceBlockFetchDecisions\": false/TraceBlockFetchDecisions\": true/g" $dirShelleyConfig
+		sed -i.bak -e "s/SimpleView/LiveView/g" -e "s/TraceBlockFetchDecisions\": false/TraceBlockFetchDecisions\": true/g" $fileShelleyConfig
 	 fi
 }
 
@@ -364,7 +389,7 @@ DecargarAchivosJson(){
 #			Configurar Relays 				    # 
 #################################################
 
-configRealys(){
+configTopoRealys(){
 
 	
 	totalRelays=${datosPool["Relays_total_Maquinas"]}
@@ -385,43 +410,43 @@ configRealys(){
 			cp $filesJson*.json $dirRelay$c
 	done
 
-	if [[ ${datosPool["comunicacion_IPv4"]} == "priv" ]]; then 
+	if [[ ${datosPool["comunicacion_Nodos"]} == "priv" ]]; then 
 		blockIP=${datosPool["IP_block_Priv"]}
 	else blockIP=${datosPool["IP_block_Pub"]}; fi
 
 	echo -e "\n"
 	for (( c=$numRelay; c<=$relayMaquina; c++ )); do
 		cd $dirRelay$c
-		echo -e "$IGreen [*] Creando archivo $dirShelleytopology para nodo relay_$c $End"  
-		echo  "{" > $dirShelleytopology
-		echo "  \"Producers\": [" >> $dirShelleytopology
-		echo "    {" >> $dirShelleytopology
-		echo "      \"opertor\": \"${datosPool[nombre_Block]}\"," >> $dirShelleytopology
-		echo "      \"addr\": \"$blockIP\"," >> $dirShelleytopology
-		echo "      \"port\": ${datosPool[Port_block]}," >> $dirShelleytopology
-		echo "      \"valency\": 1" >> $dirShelleytopology
-		echo "    }," >> $dirShelleytopology
+		echo -e "$IGreen [*] Creando archivo $fileShelleytopology para nodo relay_$c $End"  
+		echo  "{" > $fileShelleytopology
+		echo "  \"Producers\": [" >> $fileShelleytopology
+		echo "    {" >> $fileShelleytopology
+		echo "      \"opertor\": \"${datosPool[nombre_Block]}\"," >> $fileShelleytopology
+		echo "      \"addr\": \"$blockIP\"," >> $fileShelleytopology
+		echo "      \"port\": ${datosPool[Port_block]}," >> $fileShelleytopology
+		echo "      \"valency\": 1" >> $fileShelleytopology
+		echo "    }," >> $fileShelleytopology
 		for (( n=1; n<=$totalRelays; n++ )); do
 			if [[ $c != $n ]]; then
-				if [[ ${datosPool["comunicacion_IPv4"]} == "priv" ]]; then 
+				if [[ ${datosPool["comunicacion_Nodos"]} == "priv" ]]; then 
 					relayIP=${datosPool["IP_Priv_realy_$n"]}
 				else relayIP=${datosPool["IP_Pub_realy_$n"]}; fi
-				echo "    {" >> $dirShelleytopology
-				echo "      \"opertor\": \"${datosPool[nombre_Relay_$n]}\"," >> $dirShelleytopology
-		        echo "      \"addr\": \"$relayIP\"," >> $dirShelleytopology
-		        echo "      \"port\": ${datosPool[Port_realy_$n]}," >> $dirShelleytopology
-		        echo "      \"valency\": 1" >> $dirShelleytopology
-		      	echo "    }," >> $dirShelleytopology
+				echo "    {" >> $fileShelleytopology
+				echo "      \"opertor\": \"${datosPool[nombre_Relay_$n]}\"," >> $fileShelleytopology
+		        echo "      \"addr\": \"$relayIP\"," >> $fileShelleytopology
+		        echo "      \"port\": ${datosPool[Port_realy_$n]}," >> $fileShelleytopology
+		        echo "      \"valency\": 1" >> $fileShelleytopology
+		      	echo "    }," >> $fileShelleytopology
 		   	fi
 		done
-		echo "    {" >> $dirShelleytopology
-		echo "      \"opertor\": \"$nameIOHK\"," >> $dirShelleytopology
-		echo "      \"addr\": \"$IPIOHK\"," >> $dirShelleytopology
-		echo "      \"port\": $PortIOHK," >> $dirShelleytopology
-		echo "      \"valency\": 2" >> $dirShelleytopology
-		echo "    }" >> $dirShelleytopology
-		echo "  ]" >> $dirShelleytopology
-		echo "}" >> $dirShelleytopology
+		echo "    {" >> $fileShelleytopology
+		echo "      \"opertor\": \"$nameIOHK\"," >> $fileShelleytopology
+		echo "      \"addr\": \"$IPIOHK\"," >> $fileShelleytopology
+		echo "      \"port\": $PortIOHK," >> $fileShelleytopology
+		echo "      \"valency\": 2" >> $fileShelleytopology
+		echo "    }" >> $fileShelleytopology
+		echo "  ]" >> $fileShelleytopology
+		echo "}" >> $fileShelleytopology
 	done
 	cd ..
 	declare -p datosPool > ${dirNodos}/$filedatosPool
@@ -433,7 +458,7 @@ configRealys(){
 #			Configurar Block Producer		    # 
 #################################################
 
-configblockProducer(){
+configTopoblockProducer(){
 
 	totalRelays=${datosPool["Relays_total_Maquinas"]}
 
@@ -445,23 +470,23 @@ configblockProducer(){
 
 	cd $dirBlock
 
-	echo -e "$IGreen [*] Creando archivo $dirShelleytopology para nodo block_producer $End"  
-	echo  "{" > $dirShelleytopology
-	echo "  \"Producers\": [" >> $dirShelleytopology
+	echo -e "$IGreen [*] Creando archivo $fileShelleytopology para nodo block_producer $End"  
+	echo  "{" > $fileShelleytopology
+	echo "  \"Producers\": [" >> $fileShelleytopology
 	for (( n=1; n<=$totalRelays; n++ )); do
-		if [[ ${datosPool["comunicacion_IPv4"]} == "priv" ]]; then 
+		if [[ ${datosPool["comunicacion_Nodos"]} == "priv" ]]; then 
 			relayIP=${datosPool["IP_Priv_realy_$n"]}
 		else relayIP=${datosPool["IP_Pub_realy_$n"]}; fi
-		echo "    {" >> $dirShelleytopology
-		echo "      \"opertor\": \"${datosPool[nombre_Relay_$n]}\"," >> $dirShelleytopology
-		echo "      \"addr\": \"$relayIP\"," >> $dirShelleytopology
-		echo "      \"port\": ${datosPool[Port_realy_$n]}," >> $dirShelleytopology
-		echo "      \"valency\": 1" >> $dirShelleytopology
-		if [[ $n == $totalRelays ]]; then echo "    }" >> $dirShelleytopology
-		else echo "    }," >> $dirShelleytopology; fi
+		echo "    {" >> $fileShelleytopology
+		echo "      \"opertor\": \"${datosPool[nombre_Relay_$n]}\"," >> $fileShelleytopology
+		echo "      \"addr\": \"$relayIP\"," >> $fileShelleytopology
+		echo "      \"port\": ${datosPool[Port_realy_$n]}," >> $fileShelleytopology
+		echo "      \"valency\": 1" >> $fileShelleytopology
+		if [[ $n == $totalRelays ]]; then echo "    }" >> $fileShelleytopology
+		else echo "    }," >> $fileShelleytopology; fi
 	done
-	echo "  ]" >> $dirShelleytopology
-	echo "}" >> $dirShelleytopology
+	echo "  ]" >> $fileShelleytopology
+	echo "}" >> $fileShelleytopology
 
 
 	if ! grep 'CARDANO_NODE_SOCKET_PATH' ~/.bashrc > /dev/null; then 
@@ -485,12 +510,12 @@ scriptIniciarNodos(){
 			if [ -d "${dirRelay}$n" ]; then
 				cd ${dirRelay}$n
 
-				echo "cardano-node run --topology ${dirRelay}${n}/$dirShelleytopology \\" > $fileIniciarRelay$n
+				echo "cardano-node run --topology ${dirRelay}${n}/$fileShelleytopology \\" > $fileIniciarRelay$n
 				echo "--database-path ${dirRelay}${n}/db \\" >> $fileIniciarRelay$n
 				echo "--socket-path ${dirRelay}${n}/db/socket \\" >> $fileIniciarRelay$n
 				echo "--host-addr ${ipTopoRelayPub} \\" >> $fileIniciarRelay$n
 				echo "--port ${datosPool[Port_realy_$n]} \\" >> $fileIniciarRelay$n
-				echo "--config ${dirRelay}${n}/$dirShelleyConfig" >> $fileIniciarRelay$n
+				echo "--config ${dirRelay}${n}/$fileShelleyConfig" >> $fileIniciarRelay$n
 
 				echo -e "$IGreen \n [*] Se va a crear el siguiente script en el directorio ${dirRelay}$n con los siguientes datos: \n $End" 
 				cat $fileIniciarRelay$n
@@ -502,7 +527,7 @@ scriptIniciarNodos(){
 					while true; do
 						echo -e "$IGreen \n [*] Cambie los datos con los que no este deacuerdo del relay_$n: $End" 
 						while true; do
-							read -p " [?] Ingrese la ruta completa del directorio de archivo topologia [ejemplo /home/pepe/relay/mainnet-topology.json]: " topologia
+							read -p " [?] Ingrese la ruta completa del directorio de archivo topologia [ejemplo /home/pepe/relay/testnet-topology.json]: " topologia
 							if [ -f "$topologia" ]; then 
 								break
 							else 
@@ -511,7 +536,7 @@ scriptIniciarNodos(){
 							fi
 						done
 						read -p " [?] Ingrese la ruta completa del directorio de base de datos [ejemplo /home/pepe/relay/db]: " baseDatos
-						read -p " [?] Ingrese la ruta completa del directorio de archivo configuración [ejemplo /home/pepe/relay/mainnet-config.json]: " config
+						read -p " [?] Ingrese la ruta completa del directorio de archivo configuración [ejemplo /home/pepe/relay/testnet-config.json]: " config
 						while true; do
 							read -p " [?] Ingrese dirección IPv4 que quiere poner a la escucha en el nodo realy_$n [ejemplo: 192.168.1.1]: " ipRelay
 							if [[  ${ipRelay} =~ ^([0-9]{1,3}[\.]){3}[0-9]{1,3}$ ]]; then break;
@@ -523,6 +548,7 @@ scriptIniciarNodos(){
 							if [ ${puerto} -gt 1023 -a ${puerto} -lt 49152 ] ; then break;
 							else echo -e "$IYellow \n [!!] Dato incorrecto, introduce un puerto comprendido entre los números 1024 y 49151 $End"; continue; fi
 						done
+
 
 						echo "cardano-node run --topology $topologia \\" > $fileIniciarRelay$n
 						echo "--database-path $baseDatos \\" >> $fileIniciarRelay$n
@@ -553,22 +579,22 @@ scriptIniciarNodos(){
 		if [ -d "${dirBlock}" ]; then
 			cd ${dirBlock}
 
-			if [[ ${datosPool["comunicacion_IPv4"]} == "priv" ]]; then 
+			if [[ ${datosPool["comunicacion_Nodos"]} == "priv" ]]; then 
 				addrHost=${datosPool["IP_block_Priv"]}
 			else addrHost="$ipTopoBlockPub"; fi
 
-			echo "cardano-node run --topology ${dirBlock}/$dirShelleytopology \\" > $fileIniciarBlock
+			echo "cardano-node run --topology ${dirBlock}/$fileShelleytopology \\" > $fileIniciarBlock
 			echo "--database-path ${dirBlock}/db \\" >> $fileIniciarBlock
 			echo "--socket-path ${dirBlock}/db/socket \\" >> $fileIniciarBlock
 			echo "--host-addr $addrHost \\"  >> $fileIniciarBlock
 			echo "--port ${datosPool[Port_block]} \\" >> $fileIniciarBlock
 			if [ -f "${dirBlock}/${dirKeysPool}/$cert_issue_op" ]; then
-				 echo "--config ${dirBlock}/$dirShelleyConfig \\" >> $fileIniciarBlock
+				 echo "--config ${dirBlock}/$fileShelleyConfig \\" >> $fileIniciarBlock
 				 echo "--shelley-kes-key ${dirBlock}/${dirKeysPool}/$keyKES_Skey \\" >> $fileIniciarBlock
 				 echo "--shelley-vrf-key ${dirBlock}/${dirKeysPool}/$keyVRF_Skey \\" >> $fileIniciarBlock
 				 echo "--shelley-operational-certificate ${dirBlock}/${dirKeysPool}/$cert_issue_op" >> $fileIniciarBlock
 			else
-				 echo "--config ${dirBlock}/$dirShelleyConfig " >> $fileIniciarBlock
+				 echo "--config ${dirBlock}/$fileShelleyConfig " >> $fileIniciarBlock
 			fi
 
 			echo -e "$IGreen \n [*] Se va a crear el siguiente script con los siguientes datos: \n $End" 
@@ -581,7 +607,7 @@ scriptIniciarNodos(){
 				while true; do
 					echo -e "$IGreen \n [*] Cambie los datos con los que no este deacuerdo del Block Producer: $End" 
 					while true; do
-						read -p " [?] Ingrese la ruta completa del directorio de archivo topologia [ejemplo /home/pepe/block/mainnet-topology.json]: " topologia
+						read -p " [?] Ingrese la ruta completa del directorio de archivo topologia [ejemplo /home/pepe/block/testnet-topology.json]: " topologia
 						if [ -f "$topologia" ]; then 
 							break
 						else 
@@ -590,10 +616,10 @@ scriptIniciarNodos(){
 						fi
 					done
 					read -p " [?] Ingrese la ruta completa del directorio de base de datos [ejemplo /home/pepe/block/db]: " baseDatos
-					read -p " [?] Ingrese la ruta completa del directorio de archivo configuración [ejemplo /home/pepe/block/mainnet-config.json]: " config
+					read -p " [?] Ingrese la ruta completa del directorio de archivo configuración [ejemplo /home/pepe/block/testnet-config.json]: " config
 					while true; do
 						read -p " [?] Ingrese dirección IPv4 que quiere poner a la escucha en el nodo Block Producer [ejemplo: 192.168.1.1]: " ipBlock
-						if [[  ${ipRelay} =~ ^([0-9]{1,3}[\.]){3}[0-9]{1,3}$ ]]; then break;
+						if [[  ${ipBlock} =~ ^([0-9]{1,3}[\.]){3}[0-9]{1,3}$ ]]; then break;
 						else echo -e "$IYellow \n [!!] Dirección IPv4 incorrecta $End"; continue; fi 
 					done
 					
@@ -852,15 +878,15 @@ calcularKesPeriod(){
 	if ( tmux ls | grep $USER )  < /dev/null > /dev/null 2>&1; then
 		pgrep cardano-node > /dev/null
 		if [ $? -eq 0 ]; then 
-			slotNo=$( cardano-cli shelley query tip --mainnet | jq -r ."slotNo" )
+			slotNo=$( cardano-cli shelley query tip --testnet-magic $magig_Number | jq -r ."slotNo" )
 			if [ $? -eq 0 ]; then 
 				echo -e "$IGreen [i] Kes period calculado ${dirBlock}/$dirAddressKeys $End" 
 			else
 				echo -e "$IRed [!!!] Error, el comando no se ha ejecutado correctamente, compruebe los datos y la configuracion de cardano-cli $End"
 			fi 
-			slotNoKesPeriod=$( cat ${dirBlock}/$dirShelleyGenesis | jq -r '.slotsPerKESPeriod' )
+			slotNoKesPeriod=$( cat ${dirBlock}/$fileShelleyGenesis | jq -r '.slotsPerKESPeriod' )
 			datosPool["kesPeriod"]=$((${slotNo} / ${slotNoKesPeriod}))
-			datosPool["startkesPeriod"]=$(( ${datosPool["kesPeriod"]} -1 ))
+			datosPool["startkesPeriod"]=$(( ${datosPool["kesPeriod"]} + 0 ))
 			declare -p datosPool > ${dirNodos}/$filedatosPool
 		else
 			which iniciarNodos | xargs bash -c 
@@ -905,7 +931,7 @@ generarColdKeys(){
 	echo -e "$IYellow [ii] Para generar las keys cold ademas de desconectar Internet se dejaran de ejecutar los nodos en caso de que se esten ejecutando $End"
 	echo -e "$IGreen \n [*] Seleccione <y> en caso de no estar conectado por SSH y si desea desconectar Internet $End" 
 
-	read -p " [?] quiere que a coninuación se desconecte Internet [y/n]:" respuesta
+	read -p " [?] Quiere que a continuación se desconecte Internet [y/n]:" respuesta
 	if [[ $respuesta =~ ^[Yy]$ ]]; then
 		tcpdump -D | grep '\['| cut -d. -f2 | awk '{print $1}' | while read -r line; do sudo ip link set $(echo $line) down 2> /dev/null; done
 		while true; do
@@ -1048,7 +1074,7 @@ parametrosProtocolo(){
 			cd ${dirBlock}/$dirAddressKeys	
 
 			cardano-cli shelley query protocol-parameters \
-			--mainnet \
+			--testnet-magic $magig_Number \
 			--out-file $protocolParameters 
 
 			if [ $? -eq 0 ]; then 
@@ -1132,7 +1158,7 @@ addressPayment(){
 	cardano-cli shelley address build \
 	--payment-verification-key-file $keyPayment_Vkey \
     --out-file $addressPayment \
-    --mainnet
+    --testnet-magic $magig_Number
 
 	if [ $? -eq 0 ]; then 
 		echo -e "$IGreen [i] Dirección $ $addressPayment guardada en el directorio ${dirBlock}/$dirAddressKeys $End" 
@@ -1157,7 +1183,7 @@ addressStaking(){
 	cardano-cli shelley stake-address build \
     --staking-verification-key-file $keyStaking_Vkey \
     --out-file $addressStaking \
-    --mainnet
+    --testnet-magic $magig_Number
 
 	if [ $? -eq 0 ]; then 
 		echo -e "$IGreen [i] Dirección $addressStaking guardada en el directorio ${dirBlock}/$dirAddressKeys $End" 
@@ -1183,7 +1209,7 @@ addressBase(){
     --payment-verification-key-file $keyPayment_Vkey \
     --staking-verification-key-file $keyStaking_Vkey \
     --out-file $addressBase \
-    --mainnet
+    --testnet-magic $magig_Number
 
 	if [ $? -eq 0 ]; then 
 		echo -e "$IGreen [i] Dirección $addressBase guardada en el directorio ${dirBlock}/$dirAddressKeys $End" 
@@ -1214,7 +1240,7 @@ faucet(){
 
 			cardano-cli shelley query utxo \
 		    --address $(cat $addressBase) \
-		    --mainnet
+		    --testnet-magic $magig_Number
 
 		    if [ $? -eq 0 ]; then 
 		    	echo -e "$IGreen [i] Espera 120 segundos para que termine de realizarse la transaccion $End"; sleep 120
@@ -1247,11 +1273,38 @@ consultarSaldo(){
 	
 		pgrep cardano-node > /dev/null
 		if [ $? -eq 0 ]; then 
-			cd ${dirBlock}/$dirAddressKeys
-			echo -e "$IGreen [i] Consultando saldo $End" 
-			cardano-cli shelley query utxo \
-		    --address $(cat $addressBase) \
-		    --mainnet > fullUtxo.out
+
+			for registro in ${registros[@]}; do
+				case $registro in
+					"EnviarAdas") 
+					echo -e "$IGreen [i] Consultando saldo $End" 
+					cardano-cli shelley query utxo \
+					--address ${datosPool["direccionOrigen"]} \
+					--testnet-magic $magig_Number > fullUtxo.out
+				;;
+					"Recompensas") 
+					echo -e "$IGreen [i] Consultando saldo $End" 
+					cardano-cli shelley query utxo \
+					--address $(cat $addressBase)  \
+					--testnet-magic $magig_Number > fullUtxo.out
+				;;
+
+					"direccion") 
+						echo -e "$IGreen [i] Consultando saldo $End" 
+						cardano-cli shelley query utxo \
+						--address ${datosPool["direccion"]} \
+						--testnet-magic $magig_Number > fullUtxo.out
+				;;
+
+					*)
+						cd ${dirBlock}/$dirAddressKeys
+						echo -e "$IGreen [i] Consultando saldo $End" 
+						cardano-cli shelley query utxo \
+					    --address $(cat $addressBase) \
+					    --testnet-magic $magig_Number > fullUtxo.out
+				;;
+				esac
+			done
 
 		    if [ $? -eq 0 ]; then 
 
@@ -1281,9 +1334,10 @@ consultarSaldo(){
 				echo -e "$IGreen [i] TxHash: ${datosPool["UTXO"]} $End" 
 				echo -e "$IGreen [i] TxIx: ${datosPool["ID"]}  $End" 
 				echo -e "$IGreen [i] Lovelace: ${datosPool["BALANCE"]}  $End" 
+				echo -e "$IGreen [i] Input: ${datosPool["INPUT"]}  $End" 
 
 
-				echo -e "$IGreen [i] Saldo dispolible para el pledge  ${datosPool["BALANCE"]} $End" 
+				echo -e "$IGreen [i] Saldo dispolible: ${datosPool["BALANCE"]} $End" 
 			else
 				echo -e "$IRed [!!!] Error, el comando no se ha ejecutado correctamente, compruebe los datos y la configuracion de cardano-cli $End"
 				exit 1
@@ -1347,7 +1401,7 @@ calcularTransaccionFee(){
 
 			echo -e "$IGreen [i] Calculando Transaccion Fee $End" 
 
-			slotNo=$( cardano-cli shelley query tip --mainnet | jq -r ."slotNo" )
+			slotNo=$( cardano-cli shelley query tip --testnet-magic $magig_Number | jq -r ."slotNo" )
 			if [ $? -eq 0 ]; then 
 				((ttl_num=$slotNo+1000))
 				echo -e "$IGreen [i] ttl: $ttl_num $End" 
@@ -1358,8 +1412,7 @@ calcularTransaccionFee(){
 			echo "cardano-cli shelley transaction calculate-min-fee \\" > $fileTransaccionFee
 			echo "--tx-body-file $fileTransaccionTemporal \\"  >> $fileTransaccionFee
 			echo "--tx-in-count ${datosPool["TXCNT"]} \\"  >> $fileTransaccionFee
-			echo "--tx-out-count 1" \\ >> $fileTransaccionFee
-			echo "--mainnet \\" >> $fileTransaccionFee
+			echo "--testnet-magic $magig_Number \\" >> $fileTransaccionFee
 			echo "--byron-witness-count 0 \\" >> $fileTransaccionFee
 			echo "--protocol-params-file $protocolParameters \\" >> $fileTransaccionFee 
 			
@@ -1367,18 +1420,31 @@ calcularTransaccionFee(){
 			for registro in ${registros[@]}; do
 				case $registro in
 					"stake") 
+						echo "--tx-out-count 1" \\ >> $fileTransaccionFee
 						echo "--witness-count 2 " >> $fileTransaccionFee
 			  		;;
 			  		"stakePool")
+						echo "--tx-out-count 1" \\ >> $fileTransaccionFee
 			  			echo "--witness-count 3 " >> $fileTransaccionFee
 			  		;;
 			  		"pledge")
+						echo "--tx-out-count 1" \\ >> $fileTransaccionFee
 			  			echo "--witness-count 3 " >> $fileTransaccionFee
 			  		;;
 			  		"metadataUpdate")
+						echo "--tx-out-count 1" \\ >> $fileTransaccionFee
 			  			echo "--witness-count 3 " >> $fileTransaccionFee
 			  		;;
 					"retirarPool") 
+						echo "--tx-out-count 1" \\ >> $fileTransaccionFee
+						echo "--witness-count 2 " >> $fileTransaccionFee
+			  		;;
+					"EnviarAdas") 
+						echo  "--tx-out-count 2" \\  >> $fileTransaccionFee
+						echo "--witness-count 1 " >> $fileTransaccionFee
+			  		;;
+					"Recompensas") 
+						echo  "--tx-out-count 1" \\  >> $fileTransaccionFee
 						echo "--witness-count 2 " >> $fileTransaccionFee
 			  		;;
 			  	esac
@@ -1418,7 +1484,7 @@ crearTransaccion(){
 
 			echo -e "$IGreen [i] Crear transaccion $End" 
 
-			slotNo=$( cardano-cli shelley query tip --mainnet | jq -r ."slotNo" )
+			slotNo=$( cardano-cli shelley query tip --testnet-magic $magig_Number | jq -r ."slotNo" )
 			if [ $? -eq 0 ]; then 
 				((ttl_num=$slotNo+1000))
 				echo -e "$IGreen [i] ttl: $ttl_num $End" 
@@ -1475,7 +1541,25 @@ crearTransaccion(){
 					    --ttl $ttl_num \
 					    --fee 0 \
 					    --out-file $fileTransaccionTemporal \
-					    --certificate ${dirBlock}/$dirKeysPool/$cert_Retirar_Pool \
+					    --certificate ${dirBlock}/$dirKeysPool/$cert_Retirar_Pool 
+					;;
+					"EnviarAdas") 
+						cardano-cli shelley transaction build-raw \
+					    ${datosPool["INPUT"]} \
+					    --tx-out ${datosPool["direccionOrigen"]}+0 \
+					    --tx-out ${datosPool["direccionDestino"]}+0 \
+					    --ttl $ttl_num \
+					    --fee 0 \
+					    --out-file $fileTransaccionTemporal 
+					;;
+					"Recompensas") 
+						cardano-cli shelley transaction build-raw \
+					    ${datosPool["INPUT"]} \
+					    --tx-out $(cat $addressBase)+0 \
+					    --ttl $ttl_num \
+					    --fee 0 \
+					    --withdrawal $(cat $addressStaking)+${datosPool["recompensas"]} \
+					    --out-file $fileTransaccionTemporal 
 					;;
 				esac
 			done
@@ -1514,32 +1598,44 @@ construirTransaccion(){
 				case $registro in
 					"stake") 
 						costRegistro=$(cat $protocolParameters | jq -r '.keyDeposit')
+						cambio=$(( ${datosPool["BALANCE"]} - $costRegistro - $tx_fee ))
 					;;
 					"stakePool")
 						costRegistro=$(cat $protocolParameters | jq -r '.poolDeposit')
+						cambio=$(( ${datosPool["BALANCE"]} - $costRegistro - $tx_fee ))
 					;;
 					"pledge")
 						costRegistro=0
+						cambio=$(( ${datosPool["BALANCE"]} - $costRegistro - $tx_fee ))
 					;;
 					"metadataUpdate")
 						costRegistro=0
+						cambio=$(( ${datosPool["BALANCE"]} - $costRegistro - $tx_fee ))
+					;;
+					"EnviarAdas")
+						costRegistro=${datosPool["cantidadADAs"]}
+						cambio=$(( ${datosPool["BALANCE"]} - $costRegistro - $tx_fee ))
+					;;
+					"Recompensas")
+						costRegistro=${datosPool["recompensas"]}
+						cambio=$(( ${datosPool["BALANCE"]} + $costRegistro - $tx_fee ))
 				esac
 			done
 
 			echo -e "$IGreen [i] Balance: ${datosPool["BALANCE"]} $End" 
-			echo -e "$IGreen [i] Coste: $costRegistro $End" 
-			cambio=$(( ${datosPool["BALANCE"]} - $costRegistro - $tx_fee ))
+			echo -e "$IGreen [i] Cantidad a enviar: $costRegistro $End" 
 			gasto=$(( $costRegistro + $tx_fee ))
+			echo -e "$IGreen [i] Gasto: $gasto $End" 
 			datosPool["BALANCE"]=$cambio
 			declare -p datosPool > ${dirNodos}/$filedatosPool
 
+
 			if [ "$cambio" -lt 0 ]; then
-				echo -e "$IRed [!!!] Error no tiene suficientes ADAs para pagar el registro de stake address $End" 
+				echo -e "$IRed [!!!] Error no tiene suficientes ADAs para pagar enviar. Balance: ${datosPool["BALANCE"]} $End" 
 				echo -e "$IGreen [i] Consiga más ADAs $End" 
 				exit 127
 			fi
 
-			echo -e "$IGreen [i] Gasto: $gasto $End" 
 			echo -e "$IGreen [i] Balance despues de realizar el pago: ${datosPool["BALANCE"]} $End" 
 
 			for registro in ${registros[@]}; do
@@ -1592,6 +1688,25 @@ construirTransaccion(){
 					    --out-file $fileTransaccion \
 					    --certificate ${dirBlock}/$dirKeysPool/$cert_Retirar_Pool
 					;;
+					"EnviarAdas") 
+						cardano-cli shelley transaction build-raw \
+					    ${datosPool["INPUT"]}  \
+					    --tx-out ${datosPool["direccionOrigen"]}+${datosPool["BALANCE"]} \
+					    --tx-out ${datosPool["direccionDestino"]}+${datosPool["cantidadADAs"]} \
+					    --ttl $ttl_num \
+					    --fee $tx_fee \
+					    --out-file $fileTransaccion \
+					;;
+					"Recompensas") 
+						cardano-cli shelley transaction build-raw \
+					    ${datosPool["INPUT"]}  \
+					    --tx-out $(cat $addressBase)+${datosPool["BALANCE"]} \
+					    --ttl $ttl_num \
+					    --fee $tx_fee \
+					    --withdrawal $(cat $addressStaking)+${datosPool["recompensas"]} \
+					    --out-file $fileTransaccion 
+					;;
+
 				esac
 			done
 
@@ -1631,7 +1746,7 @@ firmarTransaccion(){
 						--tx-body-file $fileTransaccion \
 						--signing-key-file $dirBlock/$dirAddressKeys/$keyPayment_Skey \
 						--signing-key-file $dirBlock/$dirAddressKeys/$keyStaking_Skey \
-						--mainnet \
+						--testnet-magic $magig_Number \
 						--out-file $fileFirmaTransaccion
 					;;
 					"stakePool")
@@ -1640,7 +1755,7 @@ firmarTransaccion(){
 						--signing-key-file $dirBlock/$dirAddressKeys/$keyPayment_Skey \
 						--signing-key-file $dirBlock/$dirKeysPool/$keyPoolCold_Skey \
 						--signing-key-file $dirBlock/$dirAddressKeys/$keyStaking_Skey \
-						--mainnet \
+						--testnet-magic $magig_Number \
 						--out-file $fileFirmaTransaccion
 					;;
 					"pledge")
@@ -1649,7 +1764,7 @@ firmarTransaccion(){
 						--signing-key-file $dirBlock/$dirAddressKeys/$keyPayment_Skey \
 						--signing-key-file $dirBlock/$dirKeysPool/$keyPoolCold_Skey \
 						--signing-key-file $dirBlock/$dirAddressKeys/$keyStaking_Skey \
-						--mainnet \
+						--testnet-magic $magig_Number \
 						--out-file $fileFirmaTransaccion
 					;;
 					"metadataUpdate")
@@ -1658,7 +1773,7 @@ firmarTransaccion(){
 						--signing-key-file $dirBlock/$dirAddressKeys/$keyPayment_Skey \
 						--signing-key-file $dirBlock/$dirKeysPool/$keyPoolCold_Skey \
 						--signing-key-file $dirBlock/$dirAddressKeys/$keyStaking_Skey \
-						--mainnet \
+						--testnet-magic $magig_Number \
 						--out-file $fileFirmaTransaccion
 					;;
 					"retirarPool")
@@ -1666,7 +1781,22 @@ firmarTransaccion(){
 						--tx-body-file $fileTransaccion \
 						--signing-key-file $dirBlock/$dirAddressKeys/$keyPayment_Skey \
 						--signing-key-file $dirBlock/$dirKeysPool/$keyPoolCold_Skey \
-						--mainnet \
+						--testnet-magic $magig_Number \
+						--out-file $fileFirmaTransaccion
+					;;
+					"EnviarAdas")
+						cardano-cli shelley transaction sign \
+						--tx-body-file $fileTransaccion \
+						--signing-key-file ${datosPool["directorioPaymentskey"]} \
+						--testnet-magic $magig_Number \
+						--out-file $fileFirmaTransaccion
+					;;
+					"Recompensas")
+						cardano-cli shelley transaction sign \
+						--tx-body-file $fileTransaccion \
+						--signing-key-file $dirBlock/$dirAddressKeys/$keyPayment_Skey \
+						--signing-key-file $dirBlock/$dirAddressKeys/$keyStaking_Skey \
+						--testnet-magic $magig_Number \
 						--out-file $fileFirmaTransaccion
 					;;
 				esac
@@ -1703,7 +1833,7 @@ enviarTransaccion(){
 
 			cardano-cli shelley transaction submit \
 			--tx-file $fileFirmaTransaccion \
-			--mainnet 
+			--testnet-magic $magig_Number 
 
 		    if [ $? -eq 0 ]; then 
 				echo -e "$IGreen [i] Transaccion enviada $End" 
@@ -1734,62 +1864,60 @@ metadataPool(){
 		if [ $? -eq 0 ]; then 
 			cd ${dirBlock}/$dirKeysPool
 
-			if [ ! -f "$fileMetadataPool" ]; then
+			regex='https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)' 
+			while true; do
+				read -p " [*] Introduce el nombre de tu stake pool: " datosPool["namePool"] 
+				read -p " [*] Pon una descripción a tu stake pool: " datosPool["descripcionPool"]
 				while true; do
-					read -p " [*] Introduce el nombre de tu stake pool: " datosPool["namePool"] 
-					read -p " [*] Pon una descripción a tu stake pool: " datosPool["descripcionPool"]
-					while true; do
-						read -p " [*] Añade el ticker de tu stake pool [ caracteres 3-5 ]: " datosPool["tickerPool"] 
-						character=$(printf ${datosPool[tickerPool]}  | wc -c)
-						if [ "$character" -gt 2 -a "$character" -lt 6 ]; then
-							break
-						else
-							echo -e "$IRed [!!!] Error, el ticker no puede tener menos de 3 caracateres y más de 5 caracteres $End"
-							continue
-						fi
-					done
-				 	while true; do
-						read -p " [*] Escriebe la web de tu stake pool [ ejemplo: https://www.pruebaStakePool.com ]: " datosPool["webPool"]  
-						if [[  "${datosPool[webPool]} =~ https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)" ]]; then 
-							break;
-						else
-							echo -e "$IRed [!!!] Error, la sintaxis no corresponde a una pagina web $End"
-							continue
-						fi
-					done
-				 	while true; do
-						read -p " [*] Escriebe la web extended de tu stake pool [ ejemplo: https://www.pruebaStakePool.com ]: " datosPool["webextended"]  
-						if [[  "${datosPool[webextended]} =~ https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)" ]]; then 
-							break;
-						else
-							echo -e "$IRed [!!!] Error, la sintaxis no corresponde a una pagina web $End"
-							continue
-						fi
-					done
-
-					declare -p datosPool > ${dirNodos}/$filedatosPool
-					
-					echo "{" > $fileMetadataPool
-					echo "      \"name\": \"${datosPool["namePool"]}\"," >> $fileMetadataPool
-					echo "      \"description\": \"${datosPool["descripcionPool"]}\"," >> $fileMetadataPool
-					echo "      \"ticker\": \"${datosPool["tickerPool"]}\"," >> $fileMetadataPool
-					echo "      \"homepage\": \"${datosPool["webPool"]}\"," >> $fileMetadataPool
-					echo "      \"extended\": \"${datosPool["webextended"]}\"" >> $fileMetadataPool
-					echo "}" >> $fileMetadataPool
-
-
-					echo -e "$IGreen \n [*] Se va a crear el siguiente archivo con los siguientes datos: \n $End" 
-					cat $fileMetadataPool
-					echo -e "\n"
-					read -p " [?] Esta deacuerdo con los datos introducidos [y/n]: " respuesta
-					if [[ $respuesta =~ ^[Yy]$ ]]; then
-						chmod +x $fileMetadataPool
+					read -p " [*] Añade el ticker de tu stake pool [ caracteres 3-5 ]: " datosPool["tickerPool"] 
+					character=$(printf ${datosPool[tickerPool]}  | wc -c)
+					if [ "$character" -gt 2 -a "$character" -lt 6 ]; then
 						break
+					else
+						echo -e "$IRed [!!!] Error, el ticker no puede tener menos de 3 caracateres y más de 5 caracteres $End"
+						continue
 					fi
 				done
-			else
-				echo -e "$IYellow [!] El archivo $fileMetadataPool ya existe $End"; 
-			fi
+			 	while true; do
+					read -p " [*] Escriebe la web de tu stake pool [ ejemplo: https://www.pruebaStakePool.com ]: " datosPool["webPool"]  
+
+					if [[  ${datosPool[webPool]} =~ $regex && ${#datosPool[webPool]} -lt 65 ]]; then 
+						break
+					else
+						echo -e "$IRed [!!!] Error, la sintaxis no corresponde a una pagina web o la url tiene más de 64 caracteres $End"
+						continue
+					fi
+				done
+			 	while true; do
+					read -p " [*] Escriebe la web extended de tu stake pool [ ejemplo: https://www.pruebaStakePool.com ]: " datosPool["webextended"]  
+					if [[  ${datosPool[webextended]} =~ $regex && ${#datosPool[webPool]} -lt 65  ]]; then 
+						break
+					else
+						echo -e "$IRed [!!!] Error, la sintaxis no corresponde a una pagina web o la url tiene más de 64 caracteres $End"
+						continue
+					fi
+				done
+
+				declare -p datosPool > ${dirNodos}/$filedatosPool
+					
+				echo "{" > $fileMetadataPool
+				echo "      \"name\": \"${datosPool["namePool"]}\"," >> $fileMetadataPool
+				echo "      \"description\": \"${datosPool["descripcionPool"]}\"," >> $fileMetadataPool
+				echo "      \"ticker\": \"${datosPool["tickerPool"]}\"," >> $fileMetadataPool
+				echo "      \"homepage\": \"${datosPool["webPool"]}\"," >> $fileMetadataPool
+				echo "      \"extended\": \"${datosPool["webextended"]}\"" >> $fileMetadataPool
+				echo "}" >> $fileMetadataPool
+
+
+				echo -e "$IGreen \n [*] Se va a crear el siguiente archivo con los siguientes datos: \n $End" 
+				cat $fileMetadataPool
+				echo -e "\n"
+				read -p " [?] Esta deacuerdo con los datos introducidos [y/n]: " respuesta
+				if [[ $respuesta =~ ^[Yy]$ ]]; then
+					chmod +x $fileMetadataPool
+					break
+				fi
+			done
 		else
 			which iniciarNodos | xargs bash -c 
 			echo -e "$IGreen [i] Espera 120 segundos para que la blockchain pueda sincronizar de nuevo $End"; sleep 120
@@ -1843,98 +1971,115 @@ crearCertificadoPool(){
 		if [ $? -eq 0 ]; then 
 			cd ${dirBlock}/$dirKeysPool
 
-			if [ ! -f "$cert_pool" ]; then
-				for registro in ${registros[@]}; do
-					case $registro in
-						"stakePool")
-							costRegistro=$(cat ${dirBlock}/$dirAddressKeys/$protocolParameters | jq -r '.poolDeposit')
-							pledgeRecomendado=$(( ${datosPool["BALANCE"]} - $costRegistro - 1000000 ))
-						;;
-						"pledge")
-							costRegistro=0
-							pledgeRecomendado=$(( ${datosPool["BALANCE"]} - $costRegistro - 1000000 ))
-						;;
-						"metadataUpdate")
-							costRegistro=0
-							pledgeRecomendado=$(( ${datosPool["BALANCE"]} - $costRegistro - 1000000 ))
-					esac
+
+			for registro in ${registros[@]}; do
+				case $registro in
+					"stakePool")
+						costRegistro=$(cat ${dirBlock}/$dirAddressKeys/$protocolParameters | jq -r '.poolDeposit')
+						pledgeRecomendado=$(( ${datosPool["BALANCE"]} - $costRegistro - 1000000 ))
+					;;
+					"pledge")
+						costRegistro=0
+						pledgeRecomendado=$(( ${datosPool["BALANCE"]} - $costRegistro - 1000000 ))
+					;;
+					"metadataUpdate")
+						costRegistro=0
+						pledgeRecomendado=$(( ${datosPool["BALANCE"]} - $costRegistro - 1000000 ))
+				esac
+			done
+
+			while true; do
+				while true; do
+					echo -e "$IYellow \n [ii] Promete una cantidad menor al balance disponible ${datosPool["BALANCE"]} ya que al pagar los certificados tu balance será menor al actual $End" 
+					echo -e "$IYellow \n [ii] Si promete un pledge mayor al balance del que dispone en su direccion de owner stake $addressBase su nodo no firmará bloques \n $End"
+					echo -e "$IYellow \n [ii] Pledge recomendado $pledgeRecomendado (Balance aproximado que tendrá después de pagar el certificado del pool) $End" 
+					read -p " [*] Introduce la cantidad de Lovelace que quieres añadir al plege del stake pool [ 1000000 - ${datosPool["BALANCE"]} ]: " lovelacePledge
+					if [ "$lovelacePledge" -gt 999999 -a "$lovelacePledge" -lt "${datosPool["BALANCE"]}" ]; then
+						break
+					else
+						echo -e "$IRed [!!!] Error, la cantidad ingresa no puede ser mayor a la que dispones en el balance $End"
+					fi
 				done
 
+				minPoolCost=$(cat ${dirBlock}/$dirAddressKeys/$protocolParameters | jq -r .minPoolCost)
+				echo -e "$IGreen \n [*] El coste minimo tarifa fija es: minPoolCost: ${minPoolCost}  \n $End" 
+
+				read -p " [*] Ingresa <y> si quieres establecer otro valor de tarifa fija [y/n]: " respuesta
+				if [[ $respuesta =~ ^[Yy]$ ]]; then
+					read -p " [*] Ingresa la cantidad de lovelace que quieres establecer como tarifa fija [ejemplo: 10000000]: " minPoolCost
+				fi
+
+				regex='https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)'
+				read -p " [*] Ingresa la cantidad de margen (Tarifa Variable) que quieres recibir de las recompensas [ejemplo: 0.05 sería un 5% ]: " marginPool
 				while true; do
-					while true; do
-						echo -e "$IYellow \n [ii] Promete una cantidad menor al balance disponible ${datosPool["BALANCE"]} ya que al pagar los certificados tu balance será menor al actual $End" 
-						echo -e "$IYellow \n [ii] Si promete un pledge mayor al balance del que dispone en su direccion de owner stake $addressBase su nodo no firmará bloques \n $End"
-						echo -e "$IYellow \n [ii] Pledge recomendado $pledgeRecomendado (Balance aproximado que tendrá después de pagar el certificado del pool) $End" 
-						read -p " [*] Introduce la cantidad de Lovelace que quieres añadir al plege del stake pool [ 1000000 - ${datosPool["BALANCE"]} ]: " lovelacePledge
-						if [ "$lovelacePledge" -gt 999999 -a "$lovelacePledge" -lt "${datosPool["BALANCE"]}" ]; then
-							break
+					read -p " [*] Ingresa la url en donde has subido el archivo $poolMetaData : " urlMetadataPool
+					if [[  $urlMetadataPool =~ $regex && ${#urlMetadataPool} -lt 65 ]]; then 
+							break;
 						else
-							echo -e "$IRed [!!!] Error, la cantidad ingresa no puede ser mayor a la que dispones en el balance $End"
-						fi
-					done
-
-					minPoolCost=$(cat ${dirBlock}/$dirAddressKeys/$protocolParameters | jq -r .minPoolCost)
-					echo -e "$IGreen \n [*] El coste minimo tarifa fija es: minPoolCost: ${minPoolCost}  \n $End" 
-
-					read -p " [*] Ingresa <y> si quieres establecer otro valor de tarifa fija [y/n]: " respuesta
-					if [[ $respuesta =~ ^[Yy]$ ]]; then
-						read -p " [*] Ingresa la cantidad de lovelace que quieres establecer como tarifa fija [ejemplo: 10000000]: " minPoolCost
-					fi
-
-					read -p " [*] Ingresa la cantidad de magen (Tarifa Variable) que quieres recibir de las recompensas [ejemplo: 0.05 sería un 5% ]: " marginPool
-					while true; do
-						read -p " [*] Ingresa la url en donde has subido el archivo $poolMetaData : " urlMetadataPool
-						if [[  "$urlMetadataPool =~ https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)" ]]; then 
-								break;
-							else
-								echo -e "$IRed [!!!] Error, la sintaxis no corresponde a una pagina web $End"
-								continue
-						fi
-					done
-
-					echo "cardano-cli shelley stake-pool registration-certificate \\" > $fileRegisterPool
-					echo "--cold-verification-key-file $keyPoolCold_Vkey \\" >> $fileRegisterPool
-					echo "--vrf-verification-key-file $keyVRF_Vkey \\" >> $fileRegisterPool
-					echo "--pool-pledge $lovelacePledge \\" >> $fileRegisterPool
-					echo "--pool-cost ${minPoolCost} \\" >> $fileRegisterPool
-					echo "--pool-margin $marginPool \\" >> $fileRegisterPool
-					echo "--pool-reward-account-verification-key-file ${dirBlock}/${dirAddressKeys}/${keyStaking_Vkey} \\" >> $fileRegisterPool
-					echo "--pool-owner-stake-verification-key-file ${dirBlock}/${dirAddressKeys}/${keyStaking_Vkey} \\" >> $fileRegisterPool
-					echo "--mainnet \\" >> $fileRegisterPool
-
-					totalRelays=${datosPool["Relays_total_Maquinas"]}
-					for (( n=1; n<=$totalRelays; n++ )); do
-						echo "--pool-relay-port ${datosPool[Port_realy_$n]} \\" >> $fileRegisterPool
-						echo "--pool-relay-ipv4 ${datosPool[IP_Pub_realy_$n]} \\" >> $fileRegisterPool
-					done 
-					echo "--metadata-url $urlMetadataPool \\" >> $fileRegisterPool
-					echo "--metadata-hash $(cat poolMetaDataHash.txt) \\" >> $fileRegisterPool
-					echo "--out-file $cert_pool"  >> $fileRegisterPool
-
-
-					echo -e "$IGreen \n [*] Se va a crear el siguiente script con los siguientes datos: \n $End" 
-					cat $fileRegisterPool
-					echo -e "\n"
-					read -p " [?] Esta deacuerdo con los datos introducidos [y/n]: " respuesta
-					if [[ $respuesta =~ ^[Yy]$ ]]; then
-						chmod +x $fileRegisterPool
-						sleep 1
-						echo -e "$IGreen [i] Creando certificado $cert_pool $End" 
-						./$fileRegisterPool
-						if [ $? -eq 0 ]; then 
-							echo -e "$IGreen [i] Certificado $cert_pool creado $End" 
-							break
-						else
-							echo -e "$IRed [!!!] Error, el comando no se ha ejecutado correctamente, compruebe los datos y la configuracion de cardano-cli $End"
-							exit 1
-						fi 
-					else
+							echo -e "$IRed [!!!] Error, la sintaxis no corresponde a una pagina web o la url tiene más de 64 caracteres $End"
 							continue
 					fi
 				done
-			else
-				echo -e "$IYellow [i] El archivo $fileRegisterPool ya existe $End"
-			fi
+
+				if [[ ${datosPool["añadir_hostname"]} =~ ^[Yy]$ ]]; then
+					while true; do
+						read -p " [+] Quieres registrar IPv4 publica o hostname [host/pub]: " datosPool["register"]
+						if [[ ${datosPool["register"]} == "host" ]]; then break;
+						elif [[ ${datosPool["register"]} == "pub" ]]; then break;
+						else echo -e "$IYellow \n [!!] Dato incorrecto, introduce host o pub $End"; continue; fi
+					done
+				else
+					datosPool["register"]="pub"
+				fi
+
+				echo "cardano-cli shelley stake-pool registration-certificate \\" > $fileRegisterPool
+				echo "--cold-verification-key-file $keyPoolCold_Vkey \\" >> $fileRegisterPool
+				echo "--vrf-verification-key-file $keyVRF_Vkey \\" >> $fileRegisterPool
+				echo "--pool-pledge $lovelacePledge \\" >> $fileRegisterPool
+				echo "--pool-cost ${minPoolCost} \\" >> $fileRegisterPool
+				echo "--pool-margin $marginPool \\" >> $fileRegisterPool
+				echo "--pool-reward-account-verification-key-file ${dirBlock}/${dirAddressKeys}/${keyStaking_Vkey} \\" >> $fileRegisterPool
+				echo "--pool-owner-stake-verification-key-file ${dirBlock}/${dirAddressKeys}/${keyStaking_Vkey} \\" >> $fileRegisterPool
+				echo "--testnet-magic $magig_Number \\" >> $fileRegisterPool
+
+
+				totalRelays=${datosPool["Relays_total_Maquinas"]}
+
+				for (( n=1; n<=$totalRelays; n++ )); do
+					if [[ ${datosPool["register"]} == "pub" ]]; then 
+						echo "--pool-relay-ipv4 ${datosPool[IP_Pub_realy_$n]} \\" >> $fileRegisterPool
+						echo "--pool-relay-port ${datosPool[Port_realy_$n]} \\" >> $fileRegisterPool
+					else
+						echo "--single-host-pool-relay ${datosPool[Hostname_realy_$n]} \\" >> $fileRegisterPool
+						echo "--pool-relay-port ${datosPool[Port_realy_$n]} \\" >> $fileRegisterPool
+					fi		
+				done 
+
+				echo "--metadata-url $urlMetadataPool \\" >> $fileRegisterPool
+				echo "--metadata-hash $(cat poolMetaDataHash.txt) \\" >> $fileRegisterPool
+				echo "--out-file $cert_pool"  >> $fileRegisterPool
+
+
+				echo -e "$IGreen \n [*] Se va a crear el siguiente script con los siguientes datos: \n $End" 
+				cat $fileRegisterPool
+				echo -e "\n"
+				read -p " [?] Esta deacuerdo con los datos introducidos [y/n]: " respuesta
+				if [[ $respuesta =~ ^[Yy]$ ]]; then
+					chmod +x $fileRegisterPool
+					sleep 1
+					echo -e "$IGreen [i] Creando certificado $cert_pool $End" 
+					./$fileRegisterPool
+					if [ $? -eq 0 ]; then 
+						echo -e "$IGreen [i] Certificado $cert_pool creado $End" 
+						break
+					else
+						echo -e "$IRed [!!!] Error, el comando no se ha ejecutado correctamente, compruebe los datos y la configuracion de cardano-cli $End"
+						exit 1
+					fi 
+				else
+						continue
+				fi
+			done
 		else
 			which iniciarNodos | xargs bash -c 
 			echo -e "$IGreen [i] Espera 120 segundos para que la blockchain pueda sincronizar de nuevo $End"; sleep 120
@@ -1958,24 +2103,21 @@ crearCertificadoDelegacion(){
 		pgrep cardano-node > /dev/null
 		if [ $? -eq 0 ]; then 
 			cd ${dirBlock}/$dirKeysPool
-			if [ ! -f "$cert_pledge" ]; then
 
-				echo -e "$IGreen [i] Creando certificado $cert_pledge creado $End" 
+			echo -e "$IGreen [i] Creando certificado $cert_pledge creado $End" 
 
-				cardano-cli shelley stake-address delegation-certificate \
-				--staking-verification-key-file $dirBlock/$dirAddressKeys/$keyStaking_Vkey \
-				--cold-verification-key-file $keyPoolCold_Vkey \
-				--out-file $cert_pledge
+			cardano-cli shelley stake-address delegation-certificate \
+			--staking-verification-key-file $dirBlock/$dirAddressKeys/$keyStaking_Vkey \
+			--cold-verification-key-file $keyPoolCold_Vkey \
+			--out-file $cert_pledge
 
-				 if [ $? -eq 0 ]; then 
-					echo -e "$IGreen [i] Certificado $cert_pledge creado $End" 
-				else
-					echo -e "$IRed [!!!] Error, el comando no se ha ejecutado correctamente, compruebe los datos y la configuracion de cardano-cli $End"
-					exit 1
-				fi 
+			 if [ $? -eq 0 ]; then 
+				echo -e "$IGreen [i] Certificado $cert_pledge creado $End" 
 			else
-				echo -e "$IYellow [i] El archivo $cert_pledge ya existe $End"
-			fi
+				echo -e "$IRed [!!!] Error, el comando no se ha ejecutado correctamente, compruebe los datos y la configuracion de cardano-cli $End"
+				exit 1
+			fi 
+
 		else
 			which iniciarNodos | xargs bash -c 
 			echo -e "$IGreen [i] Espera 120 segundos para que la blockchain pueda sincronizar de nuevo $End"; sleep 120
@@ -2000,11 +2142,12 @@ reclamarStakePool(){
 
 			echo -e "$IGreen [i] Creando ID Pool $End" 
 
-			cardano-cli shelley stake-pool id --verification-key-file $keyPoolCold_Vkey > $filestakepoolid
+			cardano-cli shelley stake-pool id --cold-verification-key-file $keyPoolCold_Vkey > $filestakepoolid
+			cardano-cli shelley stake-pool id --cold-verification-key-file $keyPoolCold_Vkey --output-format hex  > $filestakepoolidHex
 			echo -e "$IGreen [i] Su ID de Pool es: $(cat $filestakepoolid) $End" 
 			sleep 1
 			echo -e "$IGreen [i] Verificando que su stake pool ya ha sido registrado en la cadena ID Pool $End" 
-			estado=$(cardano-cli shelley query ledger-state --mainnet | grep publicKey | grep $(cat $filestakepoolid))
+			estado=$(cardano-cli shelley query ledger-state --testnet-magic $magig_Number | grep publicKey | grep $(cat $filestakepoolid))
 			echo -e "$IGreen [i] pool registrado en la cadena: \n $estado $End" 
 			echo -e "$IGreen \n [i] dirigete a la siguiente web para reclamar tu stake pool https://htn.pooltool.io/ $End" 
 
@@ -2098,7 +2241,7 @@ scriptStopPool(){
 
 }
 
-scriptReinicio(){
+daemonNode(){
 
 	cd $dirNodos
 
@@ -2113,9 +2256,13 @@ scriptReinicio(){
 	echo "Type            = forking" >> $fileAutoIniciarNodos
 	echo "WorkingDirectory= /home/$(whoami)/" >> $fileAutoIniciarNodos
 	echo "ExecStart       = /home/$(whoami)/.local/bin/$fileIniciarNodos" >> $fileAutoIniciarNodos
-	echo "ExecStop        = /home/$(whoami)/.local/bin/$fileStopNodos" >> $fileAutoIniciarNodos
+	echo "ExecStop       = /home/$(whoami)/.local/bin/$fileStopNodos" >> $fileAutoIniciarNodos
+	echo "KillSignal      = SIGINT" >> $fileAutoIniciarNodos
 	echo "ExecReload      = /home/$(whoami)/.local/bin/$fileStopNodos &&  /home/$(whoami)/.local/bin/$fileIniciarNodos" >> $fileAutoIniciarNodos
 	echo "Restart         = always" >> $fileAutoIniciarNodos
+	echo "TimeoutStopSec  = 5"  >> $fileAutoIniciarNodos
+	echo "KillMode        = mixed"  >> $fileAutoIniciarNodos
+
 	echo "[Install]" >> $fileAutoIniciarNodos
 	echo "WantedBy        = multi-user.target" >> $fileAutoIniciarNodos
 
@@ -2140,8 +2287,22 @@ ConsultarRecompensas(){
 			cd ${dirBlock}/$dirAddressKeys
 
 			echo -e "$IGreen [i] Consultando Recompensas $End" 
-			cardano-cli shelley query stake-address-info --address $(cat $addressStaking) \
-			--mainnet
+
+			datosPool["datosRecompensas"]=$(cardano-cli shelley query stake-address-info --address $(cat $addressStaking) \
+			--testnet-magic $magig_Number)
+
+			datosPool["recompensas"]=$(cardano-cli shelley query stake-address-info --address $(cat $addressStaking) \
+			--testnet-magic $magig_Number | jq -r ".[0].rewardAccountBalance")
+			
+			
+			datoDireccion=$(echo ${datosPool["datosRecompensas"]} | jq -r ".[0].address")
+			delegacion=$(echo ${datosPool["datosRecompensas"]} | jq -r ".[0].delegation")
+			recompensa=$(echo ${datosPool["datosRecompensas"]} | jq -r ".[0].rewardAccountBalance")
+
+        	echo -e "$IGreen [i] Direccion: $datoDireccion $End"
+        	echo -e "$IGreen [i] delegación: $delegacion $End"
+			echo -e "$IGreen [i] Recompesas: $recompensa Lovelace $End"
+
 
 			 if [ $? -eq 0 ]; then 
 				echo -e "$IGreen [i] Recompesas Consultadas $End" 
@@ -2161,6 +2322,8 @@ ConsultarRecompensas(){
 		ConsultarRecompensas
 	fi
 
+	declare -p datosPool > ${dirNodos}/$filedatosPool
+
 }
 
 
@@ -2174,12 +2337,12 @@ certificadoRetirarStakePool(){
 			cd ${dirBlock}/
 
 			echo -e "$IGreen [i] Calculado slots por epoca $End" 
-			epochLength=$(cat $dirShelleyGenesis | jq -r '.epochLength')
+			epochLength=$(cat $fileShelleyGenesis | jq -r '.epochLength')
 			echo -e "$IGreen [i] epochLength: ${epochLength} $End" 
 			echo -e "$IGreen [i] Slots por epoca realizado \n $End" 
 
 			echo -e "$IGreen [i] Consultando slot actual $End" 
-			slotNo=$(cardano-cli shelley query tip --mainnet | jq -r '.slotNo')
+			slotNo=$(cardano-cli shelley query tip --testnet-magic $magig_Number | jq -r '.slotNo')
 			echo -e "$IGreen [i] slotNo: ${slotNo} $End" 
 			echo -e "$IGreen [i] Slot actual consultado \n $End" 
 
@@ -2245,7 +2408,7 @@ consultarRetiroPool(){
 			cd ${dirBlock}/$dirKeysPool
 
 
-			cardano-cli shelley query ledger-state --mainnet \
+			cardano-cli shelley query ledger-state --testnet-magic $magig_Number \
 			--out-file $fileLedger
 			jq -r '.esLState._delegationState._pstate._pParams."'"$(cat $filestakepoolid)"'"  // empty' $fileLedger
 					
@@ -2268,6 +2431,95 @@ consultarRetiroPool(){
 
 
 }
+
+EnviarADas(){
+
+    while true; do
+		while true; do
+			read -p " [*] Itroduce dirección de origen: " direccionOrigen
+			if [ ${#direccionOrigen} -eq $longdDireccionPayment -o ${#direccionOrigen} -eq $longDireccionBase ]; then
+				datosPool["direccionOrigen"]=$direccionOrigen
+				break
+			else
+				echo -e "$IRed [!!!] Dirección incorrecta, debe tener una lonfigtud de $longDireccionPayment  o $longDireccionBase caracteres. $End"
+				contiue
+			fi
+		done
+
+		while true; do
+			read -p " [*] Itroduce directorio de payment.skey: " directorioPaymentskey
+			if [ -f "$directorioPaymentskey" ]; then
+				datosPool["directorioPaymentskey"]=$directorioPaymentskey
+				break
+			else
+				echo -e "$IRed [!!!] El $direcotio directorioPaymentskey no existe. $End"
+			fi
+		done
+
+		while true; do
+			read -p " [*] Itroduce dirección de Destino: " direccionDestino
+			if [ ${#direccionDestino} -eq $longdDireccionPayment -o ${#direccionDestino} -eq $longDireccionBase ]; then
+				datosPool["direccionDestino"]=$direccionDestino
+				break
+			else
+				echo -e "$IRed [!!!] Dirección incorrecta, debe tener una lonfigtud de $longdDireccionPayment o $longDireccionBase caracteres. $End"
+			fi
+		done
+
+		while true; do
+			re='^[0-9]+$'
+			read -p " [*] Itroduce la cantidad de Lovelaces que quieres enviar: " cantidadADAs
+			if [[ $cantidadADAs =~ $re ]] ; then
+				datosPool["cantidadADAs"]=$cantidadADAs
+				break
+			else
+				echo -e "$IRed [!!!] La cantidad a ingresar solo debe contener caracteres numericos. $End"
+			fi
+		done
+
+		echo -e "$IGreen [*] Dirección Origen:  ${datosPool["direccionOrigen"]} $End"
+		echo -e "$IGreen [*] Directorio payment.skey:  ${datosPool["directorioPaymentskey"]} $End"
+		echo -e "$IGreen [*] Dirección Destino:  ${datosPool["direccionDestino"]} $End"
+		echo -e "$IGreen [*] Cantidad Lovelace:  ${datosPool["cantidadADAs"]} $End"
+
+		read -p " [*] Estas deacuerdo con los datos [y/n]: " respuesta
+		if [[ $respuesta =~ ^[Yy]$ ]]; then
+			break
+		fi
+	done
+		
+
+	declare -p datosPool > ${dirNodos}/$filedatosPool
+
+
+}
+
+
+direccion(){
+
+    while true; do
+		while true; do
+			read -p " [*] Itroduce dirección a consultar: " direccion
+			if [ ${#direccion} -eq $longdDireccionPayment -o ${#direccion} -eq $longDireccionBase ]; then
+				datosPool["direccion"]=$direccion
+				break
+			else
+				echo -e "$IRed [!!!] Dirección incorrecta, debe tener una lonfigtud de $longdDireccionPayment o $longDireccionBase caracteres. $End"
+			fi
+		done
+
+		echo -e "$IGreen [*] Dirección:  ${datosPool["direccion"]} $End"
+
+		read -p " [*] Estas deacuerdo con los datos [y/n]: " respuesta
+		if [[ $respuesta =~ ^[Yy]$ ]]; then
+			break
+		fi
+	done
+
+	declare -p datosPool > ${dirNodos}/$filedatosPool
+
+}
+
 
 ConfigurarPrometheus(){
 
@@ -2393,8 +2645,8 @@ ConfigurarNodeExporter(){
 						if [ -d "${dirBlock}" ]; then
 							cd $dirBlock
 							sudo sed -i.bak -e "s|ARGS=\"\"|ARGS=\"--web.listen-address=${datosPool["IP_block_Priv"]}:9100\"|"  /etc/default/prometheus-node-exporter
-							sed -i.bak -e "s|    \"127.0.0.1\"|     \"${datosPool["IP_block_Priv"]}\"|" $dirShelleyConfig
-							sed -i.bak -e "s/    12798/    12700/g" -e "s/hasEKG\": 12788/hasEKG\": 12600/g" $dirShelleyConfig
+							sed -i.bak -e "s|    \"127.0.0.1\"|     \"${datosPool["IP_block_Priv"]}\"|" $fileShelleyConfig
+							sed -i.bak -e "s/    12798/    12700/g" -e "s/hasEKG\": 12788/hasEKG\": 12600/g" $fileShelleyConfig
 							echo -e "$IGreen [i] EKG configurado en el puerto 12600 $End"
 							echo -e "$IGreen [i] El node producer y_$n esta escuchado en la IP ${datosPool["IP_block_Pub"]} hasEKG en el puerto 12600 y Prometheus 12700 $End"
 						fi
@@ -2402,11 +2654,11 @@ ConfigurarNodeExporter(){
 							cd ${dirRelay}$n
 							sudo sed -i.bak -e "s|ARGS=\"\"|ARGS=\"--web.listen-address=${datosPool["IP_Priv_realy_$n"]}:9100\"|"  /etc/default/prometheus-node-exporter
 							fileRelay=$(echo ${dirRelay}/$fileIniciarRelay$n | awk -F/ '{print $NF}')
-							sed -i.bak -e "s|    \"127.0.0.1\"|     \"${datosPool["IP_Priv_realy_$n"]}\"|" $dirShelleyConfig
+							sed -i.bak -e "s|    \"127.0.0.1\"|     \"${datosPool["IP_Priv_realy_$n"]}\"|" $fileShelleyConfig
 							echo -e "$IGreen [i] ${fileRelay:(-7)} configurado en el puerto  1270$n $End"
-							sed -i.bak -e "s|    12798|    1270$n|" -e "s|hasEKG\": 12788|hasEKG\": 1260$n|" $dirShelleyConfig
+							sed -i.bak -e "s|    12798|    1270$n|" -e "s|hasEKG\": 12788|hasEKG\": 1260$n|" $fileShelleyConfig
 							echo -e "$IGreen [i] EKG del ${fileRelay:(-7)} configurado en el puerto 1260$n $End"
-							sed -i.bak -e "s|    12798|    1270$n|" -e "s|hasEKG\": 12788|hasEKG\": 1260$n|" $dirShelleyConfig
+							sed -i.bak -e "s|    12798|    1270$n|" -e "s|hasEKG\": 12788|hasEKG\": 1260$n|" $fileShelleyConfig
 							echo -e "$IGreen [i] EKG del relay_$n configurado en el puerto 1260$n $End"
 							echo -e "$IGreen [i] El relay_$n esta escuchado en la IP ${datosPool["IP_Priv_realy_$n"]} hasEKG en el puerto  1260$n y Prometheus  1270$n $End"
 						fi
@@ -2417,8 +2669,8 @@ ConfigurarNodeExporter(){
 						if [ -d "${dirBlock}" ]; then
 							cd $dirBlock
 							sudo sed -i.bak -e "s|ARGS=\"\"|ARGS=\"--web.listen-address=${datosPool["IP_block_Pub"]}:9100\"|"  /etc/default/prometheus-node-exporter
-							sed -i.bak -e "s|    \"127.0.0.1\"|     \!${datosPool["IP_block_Pub"]}\"|" $dirShelleyConfig
-							sed -i.bak -e "s/    12798/    12700/g" -e "s/hasEKG\": 12788/hasEKG\": 12600/g" $dirShelleyConfig
+							sed -i.bak -e "s|    \"127.0.0.1\"|     \!${datosPool["IP_block_Pub"]}\"|" $fileShelleyConfig
+							sed -i.bak -e "s/    12798/    12700/g" -e "s/hasEKG\": 12788/hasEKG\": 12600/g" $fileShelleyConfig
 							echo -e "$IGreen [i] EKG configurado en el puerto 12600 $End"
 							echo -e "$IGreen [i] El node producer y_$n esta escuchado en la IP ${datosPool["IP_block_Pub"]} hasEKG en el puerto 12600 y Prometheus 12700 $End"
 						fi
@@ -2426,11 +2678,11 @@ ConfigurarNodeExporter(){
 							cd ${dirRelay}$n
 							sudo sed -i.bak -e "s|ARGS=\"\"|ARGS=\"--web.listen-address=${datosPool["IP_Pub_realy_$n"]}:9100\"|"  /etc/default/prometheus-node-exporter
 							fileRelay=$(echo ${dirRelay}/$fileIniciarRelay$n | awk -F/ '{print $NF}')
-							sed -i.bak -e "s|    \"127.0.0.1\"|     \"${datosPool["IP_Pub_realy_$n"]}\"|" $dirShelleyConfig
+							sed -i.bak -e "s|    \"127.0.0.1\"|     \"${datosPool["IP_Pub_realy_$n"]}\"|" $fileShelleyConfig
 							echo -e "$IGreen [i] ${fileRelay:(-7)} configurado en el puerto  1270$n $End"
-							sed -i.bak -e "s|    12798|    1270$n|" -e "s|hasEKG\": 12788|hasEKG\": 1260$n|" $dirShelleyConfig
+							sed -i.bak -e "s|    12798|    1270$n|" -e "s|hasEKG\": 12788|hasEKG\": 1260$n|" $fileShelleyConfig
 							echo -e "$IGreen [i] EKG del ${fileRelay:(-7)} configurado en el puerto 1260$n $End"
-							sed -i.bak -e "s|    12798|    1270$n|" -e "s|hasEKG\": 12788|hasEKG\": 1260$n|" $dirShelleyConfig
+							sed -i.bak -e "s|    12798|    1270$n|" -e "s|hasEKG\": 12788|hasEKG\": 1260$n|" $fileShelleyConfig
 							echo -e "$IGreen [i] EKG del relay_$n configurado en el puerto 1260$n $End"
 							echo -e "$IGreen [i] El relay_$n esta escuchado en la IP ${datosPool["IP_Pub_realy_$n"]} hasEKG en el puerto  1260$n y Prometheus  1270$n $End"
 						fi
@@ -3366,10 +3618,10 @@ obtenerAyuda(){
 
 elegirOpcion(){
 
-	listOpciones=("Instalar programas: net-tools, mlocate tmux, htop, git, tree, curl, openssh, fail2ban, wget, Knockd, tcpdump, gnupg2 bc"  "Instalar dependencias" "Instalar Libsodium" "Instalar Cabal y GHC" "Instalar Cardano-cli y Cardano-node" "Actualizar Cardano-node y Cardano-cli")
-	listOpciones+=("Configurar nodos relays" "Configurar Block Producer" "Crear script para iniciar los nodos" "Iniciar Nodos" "Calcular Kes period y parametros protocol" "Generar Keys Pool, cold, kes, vrf, operational certificate")
-	listOpciones+=("Generar Keys Address" "Solicitar Faucet"  "Consultar saldo" "Crear script nodo block producer" "Registrar stake address" "Registrar stake pool" "Reclamar stake pool" "Descargar script get_buddies" "Cifrar keys Pool y keys address" "Descifrar keys Pool y keys address")
-	listOpciones+=("Consultar Recompensas" "Renovar certificado kes period" "Cambiar Pledge Fee y Margin" "Actualizar Metadata" "Retirar StakePool" "Consultar Retiro StakePool" "Iniciar Stake Pool de forma automática cuando el sistema se reinicia" )
+	listOpciones=("Instalar programas: net-tools, mlocate tmux, htop, git, tree, curl, openssh, fail2ban, wget, Knockd, tcpdump, gnupg2 bc"  "Instalar dependencias" "Instalar Libsodium" "Instalar GHC" "Instalar Cabal" "Descargar Files Config, Genesis, Topology" "Instalar Cardano-cli y Cardano-node" "Actualizar Cardano-node y Cardano-cli")
+	listOpciones+=("Configurar topologia nodos relays" "Configurar topologia Block Producer" "Crear script para iniciar los nodos" "Iniciar Nodos" "Calcular Kes period y parametros protocol" "Generar Keys Pool, cold, kes, vrf, operational certificate")
+	listOpciones+=("Generar Keys Address" "Solicitar Faucet"  "Consultar saldo" "Consultar saldo de dirección concreta" "Crear script nodo block producer" "Registrar stake address" "Registrar stake pool" "Reclamar stake pool" "Descargar script get_buddies" "Cifrar keys Pool y keys address" "Descifrar keys Pool y keys address")
+	listOpciones+=("Consultar Recompensas" "Renovar certificado kes period" "Cambiar Pledge Fee y Margin" "Actualizar Metadata" "Actualizar IPs hostname Pool" "Enviar ADAs" "Reclamar Recompensas" "Retirar StakePool" "Consultar Retiro StakePool" "Iniciar Stake Pool de forma automática con daemon cuando el sistema se reinicia" )
 	listOpciones+=("Instalar prometheus" "Instalar Node Exporter" "Instalar grafana" "Configurar prometheus.yml" "Configurar Grafana"  "Configurar Node Exporter" "Ayuda")
 
 	while true
@@ -3432,12 +3684,12 @@ ejecutarOpcion(){
 			case $i in
 				"Instalar programas: "*) 
 					echo -e "\n [*] $i"
-					Programas=("net-tools" "mlocate" "tmux" "htop" "git" "tree" "curl" "openssh-server" "fail2ban" "knockd" "wget" "tcpdump" "gnupg2" "bc") 
+					Programas=("net-tools" "mlocate" "tmux" "htop" "git" "tree" "curl" "openssh-server" "fail2ban" "knockd" "wget" "tcpdump" "gnupg2" "bc" "tcptraceroute" "secure-delete" "iproute2" "")  
 					instalarProgramas $
 				;;
 				"Instalar dependencias") 
 					echo -e "\n [*] $i"
-					Programas=("python3" "libsodium-dev" "build-essential" "pkg-config" "libffi-dev" "libgmp-dev" "libssl-dev" "libtinfo-dev" "systemd" "libsystemd-dev" "zlib1g-dev" "yarn" "make" "g++" "jq" "libncursesw5"  "gnupg" "aptitude" "libtool" "autoconf") 
+					Programas=("python3" "libsodium-dev" "build-essential" "pkg-config" "libffi-dev" "libgmp-dev" "libssl-dev" "libtinfo-dev" "systemd" "libsystemd-dev" "zlib1g-dev" "yarn" "make" "g++" "jq" "libncursesw5"  "gnupg" "aptitude" "libtool" "autoconf" "automake" ) 
 					instalarProgramas 
 				;;
 				"Instalar Libsodium")
@@ -3445,10 +3697,19 @@ ejecutarOpcion(){
 					Programas=("Libsodium") 
 					instalarProgramas 
 				;;
-				"Instalar Cabal y GHC")
+				"Instalar GHC")
 					echo -e "\n [*] $i"
-					Programas=("GHC" "Cabal") 
+					Programas=("GHC") 
 					instalarProgramas 
+				;;
+				"Instalar Cabal")
+					echo -e "\n [*] $i"
+					Programas=("Cabal") 
+					instalarProgramas 
+				;;
+				"Descargar Files "*)
+					echo -e "\n [*] $i"
+					DecargarAchivosJson 
 				;;
 				"Instalar Cardano-cli y Cardano-node")
 					echo -e "\n [*] $i"
@@ -3461,17 +3722,21 @@ ejecutarOpcion(){
 					instalarProgramas
 					DecargarAchivosJson
 				;;
-				"Configurar nodos relays")
+				"Configurar topologia nodos relays")
 					echo -e "\n [*] $i"
 					DecargarAchivosJson
+					registros=("noActualizarDatos")
 					checkDatosNodo 
-					configRealys
+					configTopoRealys
+					unset registros
 				;;
-				"Configurar Block Producer")
+				"Configurar topologia Block Producer")
 					echo -e "\n [*] $i"
 					DecargarAchivosJson
+					registros=("noActualizarDatos")
 					checkDatosNodo 
-					configblockProducer
+					configTopoblockProducer
+					unset registros
 				;;
 				"Crear script para iniciar los nodos")
 					echo -e "\n [*] $i"
@@ -3514,6 +3779,14 @@ ejecutarOpcion(){
 				"Consultar saldo")
 					echo -e "\n [*] $i"
 					checkSynBlockchainCardano
+					registros=("saldo")
+					consultarSaldo
+				;;
+				"Consultar saldo "*)
+					echo -e "\n [*] $i"
+					checkSynBlockchainCardano
+					direccion
+					registros=("direccion")
 					consultarSaldo
 				;;
 				"Crear script nodo block producer")
@@ -3554,6 +3827,7 @@ ejecutarOpcion(){
 				;;
 				"Reclamar stake pool")
 					echo -e "\n [*] $i"
+					checkSynBlockchainCardano
 					reclamarStakePool
 				;;
 				"Descargar script get_buddies")
@@ -3563,7 +3837,7 @@ ejecutarOpcion(){
 				"Iniciar Stake Pool"*)
 					echo -e "\n [*] $i"
 					scriptStopPool
-					scriptReinicio
+					daemonNode
 				;;
 				"Consultar Recompensas")
 					echo -e "\n [*] $i"
@@ -3600,6 +3874,27 @@ ejecutarOpcion(){
 					enviarTransaccion
 					unset registros
 				;;
+				"Actualizar IPs hostname Pool")
+					echo -e "\n [*] $i"
+					checkSynBlockchainCardano
+					registros=("actualizarDatos")
+					checkDatosNodo
+					configTopoRealys
+					configTopoblockProducer
+					metadataPool
+					generarMetaHash
+					unset registros
+					registros=("metadataUpdate")
+					crearCertificadoPool
+					crearCertificadoDelegacion
+					consultarSaldo
+					crearTransaccion
+					calcularTransaccionFee
+					construirTransaccion
+					firmarTransaccion
+					enviarTransaccion
+					unset registros
+				;;
 				"Renovar certificado kes period")
 					echo -e "\n [*] $i"
 					checkSynBlockchainCardano
@@ -3607,6 +3902,34 @@ ejecutarOpcion(){
 					generarKESKeys
 					generarOperationalCert
 
+				;;
+				"Enviar ADAs")
+					echo -e "\n [*] $i"
+					checkSynBlockchainCardano
+					EnviarADas
+					registros=("EnviarAdas")
+					consultarSaldo
+					crearTransaccion
+					calcularTransaccionFee
+					construirTransaccion
+					firmarTransaccion
+					enviarTransaccion
+					consultarSaldo
+					unset registros
+				;;
+				"Reclamar Recompensas")
+					echo -e "\n [*] $i"
+					checkSynBlockchainCardano
+					ConsultarRecompensas
+					registros=("Recompensas")
+					consultarSaldo
+					crearTransaccion
+					calcularTransaccionFee
+					construirTransaccion
+					firmarTransaccion
+					enviarTransaccion
+					consultarSaldo
+					unset registros
 				;;
 				"Retirar StakePool")
 					echo -e "\n [*] $i"
@@ -3694,16 +4017,75 @@ if [ -z "${OS_ID##*debian*}" ]; then
 	ipTopoBlockPub="0.0.0.0"
 	ipTopoRelayPub="0.0.0.0"
 
-	dirCardanoNode="$HOME/cardano-node"
-	dirNodos="$HOME/cardano-my-node"
-	dirRelay="$HOME/cardano-my-node/relay_"
-	dirBlock="$HOME/cardano-my-node/block_producer"
-	dirShelleyConfig="mainnet-config.json"
-	dirShelleyGenesis="mainnet-shelley-genesis.json"
-	dirShelleyGenesisByron="mainnet-byron-genesis.json"
-	dirShelleytopology="mainnet-topology.json"
-	dirShelleydbSyn="mainnet-db-sync-config.json"
-	dirShelleyresConfig="rest-config.json"
+	while true; do
+		read -p " [?] Quieres crear un nodo en la red mainnet o la red testnet [mainnet/testnet]: " respuesta
+		if [[ "${respuesta}" == "mainnet" ]]; then 
+
+			dirCardanoNode="$HOME/cardano-node"
+			dirNodos="$HOME/cardano-my-node"
+			dirRelay="$HOME/cardano-my-node/relay_"
+			dirBlock="$HOME/cardano-my-node/block_producer"
+
+			fileShelleyConfig="mainnet-config.json"
+			fileShelleyGenesis="mainnet-shelley-genesis.json"
+			fileShelleyGenesisByron="mainnet-byron-genesis.json"
+			fileShelleytopology="mainnet-topology.json"
+			fileShelleydbSyn="mainnet-db-sync-config.json"
+			fileShelleyresConfig="rest-config.json"
+
+
+			IPIOHK="relays-new.cardano-mainnet.iohk.io"
+			PortIOHK="3001"
+			magig_Number=764824073
+			filesJson="mainnet-"
+
+			fileIniciarRelay=IniciarRelay_
+			fileIniciarBlock=IniciarBlock
+
+			fileIniciarNodos='iniciarNodos'
+			fileStopNodos='stopNodos'
+			fileAutoIniciarNodos="cardano-stakepool.service"
+
+			longdDireccionPayment=58
+			longDireccionBase=103
+
+			break
+
+		elif [[ "${respuesta}" == "testnet" ]]; then 
+
+			dirCardanoNode="$HOME/cardano-node"
+			dirNodos="$HOME/testnet_cardano_my_node"
+			dirRelay="$HOME/testnet_cardano_my_node/relay_"
+			dirBlock="$HOME/testnet_cardano_my_node/block_producer"
+
+			fileShelleyConfig="testnet-config.json"
+			fileShelleyGenesis="testnet-shelley-genesis.json"
+			fileShelleyGenesisByron="testnet-byron-genesis.json"
+			fileShelleytopology="testnet-topology.json"
+			fileShelleydbSyn="testnet-db-sync-config.json"
+			fileShelleyresConfig="rest-config.json"
+
+
+			IPIOHK="relays-new.cardano-testnet.iohkdev.io"
+			PortIOHK="3001"
+			magig_Number=1097911063
+			filesJson="testnet-"
+
+			fileIniciarRelay=testnet_IniciarRelay_
+			fileIniciarBlock=testnet_IniciarBlock
+
+			fileIniciarNodos='testnet_iniciarNodos'
+			fileStopNodos='testnet_stopNodos'
+			fileAutoIniciarNodos="testnet_cardano-stakepool.service"
+
+			webFaucet="https://faucet.shelley-testnet.dev.cardano.org/send-money"
+			longdDireccionPayment=63
+			longDireccionBase=108
+
+			break
+		
+		else echo -e "$IYellow \n [!!] Dato incorrecto, introduce mainnet o testnet $End"; continue; fi
+	done
 
 	echo -e "$IGreen [i] Comprobando últimos archivos .json ... $End"
 
@@ -3715,37 +4097,25 @@ if [ -z "${OS_ID##*debian*}" ]; then
 	dirAddressKeys="address_Keys"
 	dirRegistarStakeAddress="Registro_Stake_Address"
 	
-
 	
 	nameIOHK="Relays_IOHK"
 
-	IPIOHK="relays-new.cardano-mainnet.iohk.io"
-
-	PortIOHK="3001"
-	magig_Number=42
-
-	filesJson="mainnet-"
-
-	fileIniciarRelay=IniciarRelay_
-	fileIniciarBlock=IniciarBlock
 
 	filedatosPool='datosPool.txt'
-	fileIniciarNodos='iniciarNodos'
-	fileStopNodos='stopNodos'
-	fileAutoIniciarNodos="cardano-stakepool.service"
 	fileInformacionKeys='informacion_key.txt'
 
 
 	fileTransaccionFee="transFee"
 	fileTransaccion="tx.raw"
 	fileTransaccionTemporal="tx.tmp"
-	fileFirmaTransaccion="tx.raw"
+	fileFirmaTransaccion="tx.signed"
 
 	fileMetadataPool="poolMetaData.json"
 	fileMetaHashPool="poolMetaDataHash.txt"
 	fileRegisterPool="registerPool"
 	
 	filestakepoolid="stakepoolid.txt"
+	filestakepoolidHex="stakepoolidHex.txt"
 	fileGetBuddies="get_buddies.sh"
 
 	filePT_TOPOLOGY_FILE=\"topologia-amigos.json\"
@@ -3785,8 +4155,6 @@ if [ -z "${OS_ID##*debian*}" ]; then
 
 	protocolParameters="protocol_Parameters.json"
 
-	webFaucet="https://faucet.shelley-testnet.dev.cardano.org/send-money"
-
 	if [ -f "${dirNodos}/$filedatosPool" ]; then
 		. ${dirNodos}/$filedatosPool
 	fi
@@ -3801,5 +4169,3 @@ else
 	echo -e "$IRed [!!!] Este Script solo soporta distribuciones debian $End"
 	exit 1
 fi
-
-
