@@ -1,11 +1,8 @@
 # Description
 
 - Protects against DOS attacks Identifying which IP address tries to establish more than 10 TCP sessions with the Cardano node port, blocking for a day and eliminating the sessions already established by said IP.
-
 - Gets the number of peers_in with the Cardano node and saves them to a file to send the information to Grafana.
-
 - When it identifies the attack, it captures traffic with tcpdump for one minute and saves it in a .pcap file.
-
 - It records in a log file the blocked IPs that have tried to attack the Cardano node.
 
 # Requirements
