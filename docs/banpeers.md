@@ -139,7 +139,6 @@ nano banpeers.sh
 - **FILEPCAP:** Put the name and the directory where you want the pcap traffic capture to be saved.
 
 ```
-
 WORKDIR="/home/genki_relay_1/cardano-my-node/relay_1"
 
 FILEMONITOR="$WORKDIR/genkiStats/banpeers.prom"
