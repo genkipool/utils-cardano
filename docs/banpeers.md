@@ -133,10 +133,10 @@ Edit environment variables
 ```
 nano banpeers.sh
 ```
-WORKDIR: Put directory where the env file of the cn scripts is located.
-FILEMONITOR: Put the name and directory of the file where you want the number of peers_in to be saved to send the statistics to Grafana.
-FILELOG: Put the name and the directory where you want the log file to be saved.
-FILEPCAP: Put the name and the directory where you want the pcap traffic capture to be saved.
+- **WORKDIR:** Put directory where the env file of the cn scripts is located.
+- **FILEMONITOR:** Put the name and directory of the file where you want the number of peers_in to be saved to send the statistics to Grafana.
+- **FILELOG:** Put the name and the directory where you want the log file to be saved.
+- **FILEPCAP:** Put the name and the directory where you want the pcap traffic capture to be saved.
 
 ```
 
