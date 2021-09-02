@@ -31,7 +31,7 @@ sudo apt-get install fail2ban -y
 
 Edit a config file that monitors Cardano port and logs.
 
-'''
+```
 nano sudo /etc/fail2ban/jail.d/cardano.conf
 
 ```
