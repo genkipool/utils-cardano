@@ -152,7 +152,7 @@ chmod +x banpeers.sh
 create file to allow sudo to be executed without entering the password.
 
 ```
-nano /etc/sudoers.d/$USER 
+sudo nano /etc/sudoers.d/$USER 
 ```
 
 Add the following lines. We will use the example user cardano.
