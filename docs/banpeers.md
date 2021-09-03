@@ -98,7 +98,7 @@ sudo  nano /etc/default/prometheus-node-exporter
 Add the following lines. In the ip port and log directory parameters we will use the previous examples, replace these parameters with yours.
 
 ```
-ARGS="--web.listen-address=192.168.100.1:8001 --collector.textfile.directory= /home/cardano/relay/logs/relay.log --collector.textfile"
+ARGS="--web.listen-address=192.168.100.1:8001 --collector.textfile.directory= /home/cardano/relay/monitor --collector.textfile"
 ```
 
 Restart Prometheus exporters
