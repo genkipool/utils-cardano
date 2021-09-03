@@ -148,6 +148,20 @@ add execute permissions
 ```
 chmod +x banpeers.sh
 ```
+## Sudoers
+create file to allow sudo to be executed without entering the password.
+
+```
+nano /etc/sudoers.d/$USER 
+```
+
+Add the following lines. We will use the example user cardano.
+
+```
+cardano ALL=NOPASSWD: /usr/bin/fail2ban-client
+cardano ALL=NOPASSWD: /usr/bin/ss
+carano ALL=NOPASSWD: /usr/sbin/tcpdump
+```
 
 ## Cron
 
